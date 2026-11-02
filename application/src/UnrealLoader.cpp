@@ -163,7 +163,15 @@ auto UnrealLoader::load_terrain_entities(
 
   const auto mesh = std::make_shared<EntityMesh>();
 
-  std::vector<std::uint16_t> heights(full_width * full_height);
+  std::vector<std::uint16_t> heights(full_width * full_height, 0);
+
+  // Resolved neighbours; a repacked client may miss their T_* heightmap
+  // packages, so every side is optional and its border clamps to the owned
+  // edge instead of shifting the vertex layout.
+  const auto south_terrain = load_side_terrain(terrain.map_x, terrain.map_y + 1);
+  const auto east_terrain = load_side_terrain(terrain.map_x + 1, terrain.map_y);
+  const auto southeast_terrain =
+      load_side_terrain(terrain.map_x + 1, terrain.map_y + 1);
 
   {
     const auto position = to_vec3(terrain.position());
@@ -178,164 +186,184 @@ auto UnrealLoader::load_terrain_entities(
         geometry::Box{to_vec3(bounding_box.min) * scale + position,
                       to_vec3(bounding_box.max) * scale + position};
 
-    // Vertices
+    // The full (width+1)x(height+1) vertex grid always exists with a uniform
+    // full_width stride: vertex (x, y) lives at y * full_width + x.
+    mesh->vertices.resize(full_width * full_height);
+
+    // Owned interior
     for (auto y = 0; y < height; ++y) {
       for (auto x = 0; x < width; ++x) {
-        mesh->vertices.push_back(
-            {glm::vec3{x, y, heightmap[y * width + x]} * scale + position,
-             {0.0f, 0.0f, 0.0f},
-             {0.0f, 0.0f}});
-
-        heights[y * full_width + x] = heightmap[y * width + x];
+        const auto z = heightmap[y * width + x];
+        heights[y * full_width + x] = z;
+        mesh->vertices[y * full_width + x] = {
+            glm::vec3{x, y, z} * scale + position,
+            {0.0f, 0.0f, 0.0f},
+            {0.0f, 0.0f}};
       }
     }
 
-    // Indices
+    // Owned right column clamps to the owned edge
+    for (auto y = 0; y < height; ++y) {
+      const auto z = heightmap[y * width + (width - 1)];
+      heights[y * full_width + width] = z;
+      mesh->vertices[y * full_width + width] = {
+          glm::vec3{float(width), float(y), z} * scale + position,
+          {0.0f, 0.0f, 0.0f},
+          {0.0f, 0.0f}};
+    }
+
+    // Owned bottom row clamps to the owned edge
+    for (auto x = 0; x < width; ++x) {
+      const auto z = heightmap[(height - 1) * width + x];
+      heights[height * full_width + x] = z;
+      mesh->vertices[height * full_width + x] = {
+          glm::vec3{float(x), float(height), z} * scale + position,
+          {0.0f, 0.0f, 0.0f},
+          {0.0f, 0.0f}};
+    }
+
+    // Owned corner clamps to the owned edge
+    {
+      const auto z = heightmap[height * width - 1];
+      heights[height * full_width + width] = z;
+      mesh->vertices[height * full_width + width] = {
+          glm::vec3{float(width), float(height), z} * scale + position,
+          {0.0f, 0.0f, 0.0f},
+          {0.0f, 0.0f}};
+    }
+  }
+
+  // South border row takes the neighbour's top row when available
+  if (south_terrain != nullptr) {
+    const glm::vec3 position = {terrain.position().x, terrain.position().y,
+                                south_terrain->position().z};
+    const glm::vec3 scale = {terrain.scale().x, terrain.scale().y,
+                             south_terrain->scale().z};
+
+    const auto *heightmap =
+        south_terrain->terrain_map->mips[0].as<std::uint16_t>();
+
+    for (auto x = 0; x < width; ++x) {
+      const auto z = heightmap[x];
+      heights[height * full_width + x] = z;
+      mesh->vertices[height * full_width + x] = {
+          glm::vec3{float(x), float(height), z} * scale + position,
+          {0.0f, 0.0f, 0.0f},
+          {0.0f, 0.0f}};
+    }
+
+    // First part of quad
+    for (auto x = 0; x < width - 1; ++x) {
+      mesh->indices.push_back(x + (height - 1) * full_width);
+      mesh->indices.push_back((x + 1) + (height - 1) * full_width);
+      mesh->indices.push_back(x + height * full_width);
+    }
+
+    // Second part of quad
+    for (auto x = 1; x < width; ++x) {
+      mesh->indices.push_back(x + (height - 1) * full_width);
+      mesh->indices.push_back(x + height * full_width);
+      mesh->indices.push_back((x - 1) + height * full_width);
+    }
+  }
+
+  // East border column takes the neighbour's left column when available
+  if (east_terrain != nullptr) {
+    const glm::vec3 position = {terrain.position().x, terrain.position().y,
+                                east_terrain->position().z};
+    const glm::vec3 scale = {terrain.scale().x, terrain.scale().y,
+                             east_terrain->scale().z};
+
+    const auto *heightmap =
+        east_terrain->terrain_map->mips[0].as<std::uint16_t>();
+
+    for (auto y = 0; y < height; ++y) {
+      const auto z = heightmap[y * width];
+      heights[y * full_width + width] = z;
+      mesh->vertices[y * full_width + width] = {
+          glm::vec3{float(width), float(y), z} * scale + position,
+          {0.0f, 0.0f, 0.0f},
+          {0.0f, 0.0f}};
+    }
+
+    // First part of quad
+    for (auto y = 0; y < height - 1; ++y) {
+      mesh->indices.push_back((width - 1) + y * full_width);
+      mesh->indices.push_back(width + y * full_width);
+      mesh->indices.push_back((width - 1) + (y + 1) * full_width);
+    }
+
+    // Second part of quad
+    for (auto y = 1; y < height; ++y) {
+      mesh->indices.push_back((width - 1) + y * full_width);
+      mesh->indices.push_back(width + (y - 1) * full_width);
+      mesh->indices.push_back(width + y * full_width);
+    }
+  }
+
+  // Southeast corner takes the neighbour's top-left sample when available
+  if (southeast_terrain != nullptr) {
+    const glm::vec3 position = {terrain.position().x, terrain.position().y,
+                                southeast_terrain->position().z};
+    const glm::vec3 scale = {terrain.scale().x, terrain.scale().y,
+                             southeast_terrain->scale().z};
+
+    const auto *heightmap =
+        southeast_terrain->terrain_map->mips[0].as<std::uint16_t>();
+
+    const auto z = heightmap[0];
+    heights[height * full_width + width] = z;
+    mesh->vertices[height * full_width + width] = {
+        glm::vec3{float(width), float(height), z} * scale + position,
+        {0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f}};
+
+    // First part of quad
+    mesh->indices.push_back((width - 1) + (height - 1) * full_width);
+    mesh->indices.push_back(width + (height - 1) * full_width);
+    mesh->indices.push_back(width + height * full_width);
+
+    // Second part of quad
+    mesh->indices.push_back((width - 1) + (height - 1) * full_width);
+    mesh->indices.push_back(width + height * full_width);
+    mesh->indices.push_back((width - 1) + height * full_width);
+  }
+
+  {
+    // Quads (owned, diagonal per the edge turn bitmap)
     for (auto y = 0; y < height - 1; ++y) {
       for (auto x = 0; x < width - 1; ++x) {
         if (!terrain.quad_visibility_bitmap[x + y * width]) {
           continue;
         }
 
+        const auto v00 = x + y * full_width;
+        const auto v10 = v00 + 1;
+        const auto v01 = v00 + full_width;
+        const auto v11 = v01 + 1;
+
         if (!terrain.edge_turn_bitmap[x + y * width]) {
           // First part of quad
-          mesh->indices.push_back((x + 0) + (y + 0) * width);
-          mesh->indices.push_back((x + 1) + (y + 0) * width);
-          mesh->indices.push_back((x + 1) + (y + 1) * width);
+          mesh->indices.push_back(v00);
+          mesh->indices.push_back(v10);
+          mesh->indices.push_back(v11);
 
           // Second part of quad
-          mesh->indices.push_back((x + 0) + (y + 0) * width);
-          mesh->indices.push_back((x + 1) + (y + 1) * width);
-          mesh->indices.push_back((x + 0) + (y + 1) * width);
+          mesh->indices.push_back(v00);
+          mesh->indices.push_back(v11);
+          mesh->indices.push_back(v01);
         } else {
           // First part of quad
-          mesh->indices.push_back((x + 0) + (y + 1) * width);
-          mesh->indices.push_back((x + 0) + (y + 0) * width);
-          mesh->indices.push_back((x + 1) + (y + 0) * width);
+          mesh->indices.push_back(v01);
+          mesh->indices.push_back(v00);
+          mesh->indices.push_back(v10);
 
           // Second part of quad
-          mesh->indices.push_back((x + 0) + (y + 1) * width);
-          mesh->indices.push_back((x + 1) + (y + 0) * width);
-          mesh->indices.push_back((x + 1) + (y + 1) * width);
+          mesh->indices.push_back(v01);
+          mesh->indices.push_back(v10);
+          mesh->indices.push_back(v11);
         }
       }
-    }
-  }
-
-  // South
-  const auto south_terrain =
-      load_side_terrain(terrain.map_x, terrain.map_y + 1);
-
-  {
-    if (south_terrain != nullptr) {
-      const glm::vec3 position = {terrain.position().x, terrain.position().y,
-                                  south_terrain->position().z};
-      const glm::vec3 scale = {terrain.scale().x, terrain.scale().y,
-                               south_terrain->scale().z};
-
-      const auto y = height;
-
-      const auto *heightmap =
-          south_terrain->terrain_map->mips[0].as<std::uint16_t>();
-
-      for (auto x = 0; x < width; ++x) {
-        mesh->vertices.push_back(
-            {glm::vec3{x, y, heightmap[x]} * scale + position,
-             {0.0f, 0.0f, 0.0f},
-             {0.0f, 0.0f}});
-
-        heights[y * full_width + x] = heightmap[x];
-
-        // First part of quad
-        if (x != width - 1) {
-          mesh->indices.push_back((x + 0) + (y - 1) * width);
-          mesh->indices.push_back((x + 1) + (y - 1) * width);
-          mesh->indices.push_back(mesh->vertices.size() - 1);
-        }
-
-        // Second part of quad
-        if (x != 0) {
-          mesh->indices.push_back((x + 0) + (y - 1) * width);
-          mesh->indices.push_back(mesh->vertices.size() - 1);
-          mesh->indices.push_back(mesh->vertices.size() - 2);
-        }
-      }
-    }
-  }
-
-  // East
-  const auto east_terrain = load_side_terrain(terrain.map_x + 1, terrain.map_y);
-
-  {
-    if (east_terrain != nullptr) {
-      const glm::vec3 position = {terrain.position().x, terrain.position().y,
-                                  east_terrain->position().z};
-      const glm::vec3 scale = {terrain.scale().x, terrain.scale().y,
-                               east_terrain->scale().z};
-
-      const auto x = width;
-
-      const auto *heightmap =
-          east_terrain->terrain_map->mips[0].as<std::uint16_t>();
-
-      for (auto y = 0; y < height; ++y) {
-        mesh->vertices.push_back(
-            {glm::vec3{x, y, heightmap[y * width]} * scale + position,
-             {0.0f, 0.0f, 0.0f},
-             {0.0f, 0.0f}});
-
-        heights[y * full_width + x] = heightmap[y * width];
-
-        // First part of quad
-        if (y != height - 1) {
-          mesh->indices.push_back((x - 1) + (y + 0) * width);
-          mesh->indices.push_back(mesh->vertices.size() - 1);
-          mesh->indices.push_back((x - 1) + (y + 1) * width);
-        }
-
-        // Second part of quad
-        if (y != 0) {
-          mesh->indices.push_back((x - 1) + (y + 0) * width);
-          mesh->indices.push_back(mesh->vertices.size() - 2);
-          mesh->indices.push_back(mesh->vertices.size() - 1);
-        }
-      }
-    }
-  }
-
-  // Southeast
-  const auto southeast_terrain =
-      load_side_terrain(terrain.map_x + 1, terrain.map_y + 1);
-
-  {
-    if (southeast_terrain != nullptr) {
-      const glm::vec3 position = {terrain.position().x, terrain.position().y,
-                                  southeast_terrain->position().z};
-      const glm::vec3 scale = {terrain.scale().x, terrain.scale().y,
-                               southeast_terrain->scale().z};
-
-      const auto x = width;
-      const auto y = height;
-
-      const auto *heightmap =
-          southeast_terrain->terrain_map->mips[0].as<std::uint16_t>();
-
-      mesh->vertices.push_back(
-          {glm::vec3{x, y, heightmap[0]} * scale + position,
-           {0.0f, 0.0f, 0.0f},
-           {0.0f, 0.0f}});
-
-      heights[y * full_width + x] = heightmap[0];
-
-      // First part of quad
-      mesh->indices.push_back((x - 1) + (y - 1) * width);
-      mesh->indices.push_back(mesh->vertices.size() - 2);
-      mesh->indices.push_back(mesh->vertices.size() - 1);
-
-      // Second part of quad
-      mesh->indices.push_back((x - 1) + (y - 1) * width);
-      mesh->indices.push_back(mesh->vertices.size() - 1);
-      mesh->indices.push_back(mesh->vertices.size() - (width + 2));
     }
   }
 
@@ -346,11 +374,10 @@ auto UnrealLoader::load_terrain_entities(
         const float z = heights[y * full_width + x];
 
         const auto top = y > 0 ? heights[(y - 1) * full_width + x] : z;
-        const auto bottom = y < height - (south_terrain == nullptr ? 1 : 0)
-                                ? heights[(y + 1) * full_width + x]
-                                : z;
+        const auto bottom =
+            y < full_height - 1 ? heights[(y + 1) * full_width + x] : z;
         const auto left = x > 0 ? heights[y * full_width + (x - 1)] : z;
-        const auto right = x < width - (east_terrain == nullptr ? 1 : 0)
+        const auto right = x < full_width - 1
                                ? heights[y * full_width + (x + 1)]
                                : z;
 
@@ -358,18 +385,7 @@ auto UnrealLoader::load_terrain_entities(
             glm::vec3{(left - right) / (full_width * 2.0f),
                       (top - bottom) / (full_height * 2.0f), 4.0f});
 
-        if (x < width && y < height) {
-          mesh->vertices[y * width + x].normal = normal;
-        } else if (x == width && y == height && southeast_terrain != nullptr) {
-          // Southeast
-          mesh->vertices[y * full_width + x].normal = normal;
-        } else if (y == height && south_terrain != nullptr) {
-          // South
-          mesh->vertices[y * width + x].normal = normal;
-        } else if (x == width && east_terrain != nullptr) {
-          // East
-          mesh->vertices[full_height * width + y].normal = normal;
-        }
+        mesh->vertices[y * full_width + x].normal = normal;
       }
     }
   }
