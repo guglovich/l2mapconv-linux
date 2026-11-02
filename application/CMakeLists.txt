@@ -57,6 +57,8 @@ add_executable(${PROJECT_NAME}
     src/TerritoryCommandLine.cpp
     src/TerritoryRenderPolicy.cpp
     src/TerritoryRenderWindow.cpp
+
+    src/DesktopIntegration.cpp
 )
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/pch.h)

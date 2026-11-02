@@ -1,10 +1,19 @@
 #include "OwnedChildProcess.h"
 #include "TerritoryProcess.h"
+#include <cerrno>
 #include <stdexcept>
 #include <system_error>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <linux/close_range.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+#ifdef _WIN32
 namespace {
 struct Handle {
   HANDLE value{};
@@ -28,10 +37,52 @@ struct OwnedChildProcess::Impl {
   Handle process, job;
 };
 #else
-struct OwnedChildProcess::Impl {};
+struct OwnedChildProcess::Impl {
+  pid_t pid{-1};
+  std::optional<int> code;
+  // Reaps the child once; blocking mode is for the owner destructor.
+  std::optional<int> collect(bool blocking) {
+    if (code)
+      return code;
+    if (pid < 0)
+      return std::nullopt;
+    int status = 0;
+    const auto reaped = waitpid(pid, &status, blocking ? 0 : WNOHANG);
+    if (reaped == 0)
+      return std::nullopt;
+    if (reaped < 0)
+      throw std::system_error(errno, std::generic_category(), "waitpid");
+    if (WIFEXITED(status))
+      code = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status))
+      code = 128 + WTERMSIG(status);
+    else
+      code = 1;
+    return code;
+  }
+  // The child owns a session, so its group covers descendants; ESRCH means
+  // the tree is already gone.
+  void terminate_tree() noexcept {
+    if (pid > 0 && !code)
+      kill(-pid, SIGKILL);
+  }
+};
 #endif
 OwnedChildProcess::OwnedChildProcess() : m_impl(std::make_unique<Impl>()) {}
+#ifdef _WIN32
 OwnedChildProcess::~OwnedChildProcess() = default;
+#else
+OwnedChildProcess::~OwnedChildProcess() {
+  // Mirror the Windows KILL_ON_JOB_CLOSE job: descendants cannot outlive
+  // this owner.
+  m_impl->terminate_tree();
+  try {
+    while (m_impl->pid > 0 && !m_impl->collect(true))
+      ;
+  } catch (...) {
+  }
+}
+#endif
 void OwnedChildProcess::start(const std::filesystem::path &exe,
                               const std::vector<std::wstring> &arguments,
                               const std::filesystem::path &log) {
@@ -110,10 +161,96 @@ void OwnedChildProcess::start(const std::filesystem::path &exe,
     fail("Resume owned child");
   m_impl = std::move(candidate);
 #else
-  (void)exe;
-  (void)arguments;
-  (void)log;
-  throw std::runtime_error("Owned children require Windows");
+  if (m_impl->pid > 0 && !exit_code())
+    throw std::logic_error("Owned child is already running");
+  if (!exe.is_absolute() || !log.is_absolute())
+    throw std::invalid_argument("Owned child paths must be absolute");
+  for (const auto &argument : arguments)
+    if (argument.find(L'\0') != std::wstring::npos)
+      throw std::invalid_argument("NUL in child argument");
+  std::string executable = exe.string();
+  std::string working = log.parent_path().string();
+  // Everything the child touches is built before fork: after fork only
+  // async-signal-safe calls happen there.
+  std::vector<std::string> utf8_arguments;
+  utf8_arguments.reserve(arguments.size());
+  for (const auto &argument : arguments)
+    utf8_arguments.push_back(wide_to_utf8(argument));
+  std::vector<char *> pointers;
+  pointers.reserve(utf8_arguments.size() + 2);
+  pointers.push_back(executable.data());
+  for (auto &argument : utf8_arguments)
+    pointers.push_back(argument.data());
+  pointers.push_back(nullptr);
+  const int log_file = open(log.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+  if (log_file < 0)
+    throw std::system_error(errno, std::generic_category(), "Create child log");
+  const int null_file = open("/dev/null", O_RDONLY | O_CLOEXEC);
+  if (null_file < 0) {
+    const int error = errno;
+    close(log_file);
+    throw std::system_error(error, std::generic_category(), "Create child stdin");
+  }
+  int report[2];
+  if (pipe2(report, O_CLOEXEC) != 0) {
+    const int error = errno;
+    close(log_file);
+    close(null_file);
+    throw std::system_error(error, std::generic_category(), "pipe");
+  }
+  const pid_t child = fork();
+  if (child < 0) {
+    const int error = errno;
+    close(log_file);
+    close(null_file);
+    close(report[0]);
+    close(report[1]);
+    throw std::system_error(error, std::generic_category(), "fork");
+  }
+  if (child == 0) {
+    close(report[0]);
+    auto fail_child = [write_end = report[1]](int error) {
+      ssize_t ignored = write(write_end, &error, sizeof(error));
+      (void)ignored;
+      _exit(127);
+    };
+    // A new session makes the child a process group leader, so
+    // terminate_tree_owned() can kill the whole tree with one signal.
+    if (setsid() < 0)
+      fail_child(errno);
+    if (chdir(working.c_str()) != 0)
+      fail_child(errno);
+    if (dup2(null_file, STDIN_FILENO) < 0 ||
+        dup2(log_file, STDOUT_FILENO) < 0 ||
+        dup2(log_file, STDERR_FILENO) < 0)
+      fail_child(errno);
+    // Mark the owner's descriptors exec-close; on success the exec also
+    // clears the report pipe, on failure it stays readable below.
+    if (close_range(3, ~0U, CLOSE_RANGE_CLOEXEC) != 0 && errno != ENOSYS &&
+        errno != EINVAL)
+      fail_child(errno);
+    execv(executable.c_str(), pointers.data());
+    fail_child(errno);
+  }
+  close(report[1]);
+  close(log_file);
+  close(null_file);
+  int failure = 0;
+  ssize_t got;
+  while ((got = read(report[0], &failure, sizeof(failure))) == -1 &&
+         errno == EINTR) {
+  }
+  close(report[0]);
+  if (got == static_cast<ssize_t>(sizeof(failure))) {
+    int status = 0;
+    while (waitpid(child, &status, 0) == -1 && errno == EINTR) {
+    }
+    throw std::system_error(failure, std::generic_category(),
+                            "Create owned child");
+  }
+  auto replacement = std::make_unique<Impl>();
+  replacement->pid = child;
+  m_impl = std::move(replacement);
 #endif
 }
 auto OwnedChildProcess::exit_code() -> std::optional<int> {
@@ -130,12 +267,16 @@ auto OwnedChildProcess::exit_code() -> std::optional<int> {
     fail("Get owned child exit code");
   return static_cast<int>(code);
 #else
-  return 2;
+  if (m_impl->pid < 0)
+    throw std::logic_error("No owned child");
+  return m_impl->collect(false);
 #endif
 }
 void OwnedChildProcess::terminate_tree_owned() {
 #ifdef _WIN32
   if (m_impl->job.value && !TerminateJobObject(m_impl->job.value, 130))
     fail("Terminate owned child tree");
+#else
+  m_impl->terminate_tree();
 #endif
 }

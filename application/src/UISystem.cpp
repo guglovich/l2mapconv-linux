@@ -6,14 +6,7 @@
 #include "TerritoryRenderController.h"
 #include "GeodataBuildController.h"
 #include "PathfindingWindow.h"
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <shellapi.h>
-#endif
+#include "DesktopIntegration.h"
 
 #include <string>
 
@@ -463,9 +456,7 @@ void UISystem::geodata_window() const {
                              ? controller.output_root() : controller.job_directory();
     ImGui::TextWrapped("Output: %s", path_label(output).c_str());
     if (!controller.job_directory().empty() && ImGui::Button("Open output folder")) {
-#ifdef _WIN32
-      ShellExecuteW(nullptr, L"open", output.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-#endif
+      open_path_externally(output);
     }
   }
   ImGui::End();

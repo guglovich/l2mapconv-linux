@@ -10,6 +10,11 @@
 #include <atomic>
 #include <wincodec.h>
 #include <windows.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
+#include <zlib.h>
 #endif
 namespace territory {
 namespace {
@@ -177,6 +182,53 @@ private:
   std::atomic<ULONG> refs{1};
   HANDLE file;
 };
+#else
+struct Temporary {
+  std::filesystem::path path;
+  bool owned{};
+  ~Temporary() {
+    if (owned) {
+      std::error_code ignored;
+      std::filesystem::remove(path, ignored);
+    }
+  }
+};
+void write_all(int file, const unsigned char *data, std::size_t size) {
+  std::size_t total = 0;
+  while (total < size) {
+    const auto written = ::write(file, data + total, size - total);
+    if (written < 0) {
+      if (errno == EINTR)
+        continue;
+      throw std::system_error(errno, std::generic_category(), "write PNG");
+    }
+    total += static_cast<std::size_t>(written);
+  }
+}
+void write_chunk(int file, const char *type,
+                 const std::vector<unsigned char> &data) {
+  const std::uint32_t count = static_cast<std::uint32_t>(data.size());
+  const std::array<unsigned char, 4> length{
+      static_cast<unsigned char>(count >> 24),
+      static_cast<unsigned char>(count >> 16),
+      static_cast<unsigned char>(count >> 8),
+      static_cast<unsigned char>(count)};
+  const std::array<unsigned char, 4> type_bytes{
+      static_cast<unsigned char>(type[0]), static_cast<unsigned char>(type[1]),
+      static_cast<unsigned char>(type[2]), static_cast<unsigned char>(type[3])};
+  write_all(file, length.data(), length.size());
+  write_all(file, type_bytes.data(), type_bytes.size());
+  write_all(file, data.data(), data.size());
+  auto value = crc(0xffffffffu, std::span(type_bytes));
+  value = crc(value, data);
+  const std::uint32_t checksum = value ^ 0xffffffffu;
+  const std::array<unsigned char, 4> encoded{
+      static_cast<unsigned char>(checksum >> 24),
+      static_cast<unsigned char>(checksum >> 16),
+      static_cast<unsigned char>(checksum >> 8),
+      static_cast<unsigned char>(checksum)};
+  write_all(file, encoded.data(), encoded.size());
+}
 #endif
 } // namespace
 bool png_has_dimensions(const std::filesystem::path &path, int width,
@@ -245,6 +297,18 @@ struct PngOutput::Impl {
   Com<IWICImagingFactory> factory;
   Com<IWICBitmapEncoder> encoder;
   Com<IWICBitmapFrameEncode> frame;
+#else
+  ~Impl() {
+    if (file >= 0)
+      ::close(file);
+    if (zlib.state)
+      deflateEnd(&zlib);
+  }
+  Temporary temporary;
+  int file{-1};
+  z_stream zlib{};
+  std::vector<unsigned char> row_buffer;
+  std::vector<unsigned char> idat;
 #endif
   Impl(const std::filesystem::path &path, int w, int h, Checkpoint hook)
       : final_path(std::filesystem::absolute(path).lexically_normal()),
@@ -302,8 +366,57 @@ struct PngOutput::Impl {
     checked(metadata->SetMetadataByName(L"/sRGB/RenderingIntent", &value),
             "PNG sRGB metadata");
 #else
-    throw std::runtime_error("PNG export requires Windows WIC in this version");
+    std::random_device random;
+    temporary.path =
+        final_path.parent_path() / (".png-" + std::to_string(random()) + "-" +
+                                    std::to_string(random()) + ".tmp");
+    file = ::open(temporary.path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+    if (file < 0)
+      throw std::system_error(errno, std::generic_category(),
+                              "create PNG temporary");
+    temporary.owned = true;
+    const std::array<unsigned char, 8> signature{137, 80, 78, 71,
+                                                 13, 10, 26, 10};
+    write_all(file, signature.data(), signature.size());
+    // IHDR: 8-bit truecolor RGB, no interlace.
+    const std::array<unsigned char, 13> header{
+        static_cast<unsigned char>(w >> 24), static_cast<unsigned char>(w >> 16),
+        static_cast<unsigned char>(w >> 8), static_cast<unsigned char>(w),
+        static_cast<unsigned char>(h >> 24), static_cast<unsigned char>(h >> 16),
+        static_cast<unsigned char>(h >> 8), static_cast<unsigned char>(h),
+        8, 2, 0, 0, 0};
+    std::vector<unsigned char> chunk(header.begin(), header.end());
+    write_chunk(file, "IHDR", chunk);
+    // Perceptual sRGB intent, mirroring the WIC metadata above.
+    chunk.assign(1, 0);
+    write_chunk(file, "sRGB", chunk);
+    if (deflateInit(&zlib, Z_DEFAULT_COMPRESSION) != Z_OK)
+      throw std::runtime_error("PNG deflate initialization failed");
+    row_buffer.resize(1 + static_cast<std::size_t>(w) * 3);
 #endif
+  }
+  void deflate_feed(std::span<const std::uint8_t> data) {
+    zlib.next_in =
+        const_cast<Bytef *>(reinterpret_cast<const Bytef *>(data.data()));
+    zlib.avail_in = static_cast<uInt>(data.size());
+    std::array<unsigned char, 65536> out;
+    while (zlib.avail_in > 0) {
+      zlib.next_out = out.data();
+      zlib.avail_out = static_cast<uInt>(out.size());
+      const int state = deflate(&zlib, Z_NO_FLUSH);
+      const auto produced = out.size() - zlib.avail_out;
+      if (produced) {
+        idat.insert(idat.end(), out.data(), out.data() + produced);
+        if (idat.size() >= 1024 * 1024) {
+          write_chunk(file, "IDAT", idat);
+          idat.clear();
+        }
+      }
+      if (state != Z_OK && state != Z_BUF_ERROR)
+        throw std::runtime_error("PNG deflate failed");
+      if (state == Z_BUF_ERROR && !produced)
+        throw std::runtime_error("PNG deflate stalled");
+    }
   }
   void check() {
     if (std::this_thread::get_id() != owner)
@@ -335,6 +448,16 @@ struct PngOutput::Impl {
                                    bgr.data()),
                 "write PNG row");
       }
+#else
+      // One filter-0 scanline per row; RGB24 goes into the stream as-is.
+      for (int row = 0; row < count; ++row) {
+        const auto rgb = bytes.subspan(
+            static_cast<std::size_t>(row) * width * 3,
+            static_cast<std::size_t>(width) * 3);
+        row_buffer[0] = 0;
+        std::copy(rgb.begin(), rgb.end(), row_buffer.begin() + 1);
+        deflate_feed(row_buffer);
+      }
 #endif
       next += count;
     } catch (...) {
@@ -364,6 +487,48 @@ struct PngOutput::Impl {
                        MOVEFILE_WRITE_THROUGH))
         throw std::system_error(GetLastError(), std::system_category(),
                                 "publish PNG without replacement");
+      temporary.owned = false;
+#else
+      std::array<unsigned char, 65536> out;
+      int state = Z_OK;
+      do {
+        zlib.next_out = out.data();
+        zlib.avail_out = static_cast<uInt>(out.size());
+        state = deflate(&zlib, Z_FINISH);
+        const auto produced = out.size() - zlib.avail_out;
+        if (produced) {
+          idat.insert(idat.end(), out.data(), out.data() + produced);
+          if (idat.size() >= 1024 * 1024) {
+            write_chunk(file, "IDAT", idat);
+            idat.clear();
+          }
+        }
+        if (state != Z_OK && state != Z_STREAM_END)
+          throw std::runtime_error("PNG deflate failed");
+      } while (state != Z_STREAM_END);
+      deflateEnd(&zlib);
+      if (!idat.empty()) {
+        write_chunk(file, "IDAT", idat);
+        idat.clear();
+      }
+      const std::vector<unsigned char> empty;
+      write_chunk(file, "IEND", empty);
+      if (::fsync(file) != 0)
+        throw std::system_error(errno, std::generic_category(), "flush PNG");
+      if (::close(file) != 0) {
+        file = -1;
+        throw std::system_error(errno, std::generic_category(), "close PNG");
+      }
+      file = -1;
+      if (!png_has_dimensions(temporary.path, width, height))
+        throw std::runtime_error("PNG verification failed before publication");
+      check_cancel(cancel);
+      // Exclusive publication: link cannot replace an existing destination.
+      if (::link(temporary.path.c_str(), final_path.c_str()) != 0)
+        throw std::system_error(errno, std::generic_category(),
+                                "publish PNG without replacement");
+      std::error_code ignored;
+      std::filesystem::remove(temporary.path, ignored);
       temporary.owned = false;
 #endif
       finished = true;

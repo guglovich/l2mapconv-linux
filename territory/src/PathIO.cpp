@@ -8,6 +8,9 @@
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 namespace territory {
 namespace {
@@ -190,9 +193,48 @@ void write_json_atomic(const std::filesystem::path &path, const Json &value,
     throw;
   }
 #else
-  (void)temporary;
-  (void)bytes;
-  throw std::runtime_error("Territory output requires Windows in this version");
+  int file = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+  if (file < 0)
+    throw std::system_error(errno, std::generic_category(),
+                            "create JSON temporary");
+  try {
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+      const auto written =
+          ::write(file, bytes.data() + offset, bytes.size() - offset);
+      if (written < 0) {
+        if (errno == EINTR)
+          continue;
+        throw std::system_error(errno, std::generic_category(), "write JSON");
+      }
+      offset += static_cast<std::size_t>(written);
+    }
+    if (::fsync(file) != 0)
+      throw std::system_error(errno, std::generic_category(), "flush JSON");
+    if (::close(file) != 0) {
+      file = -1;
+      throw std::system_error(errno, std::generic_category(), "close JSON");
+    }
+    file = -1;
+    if (replace) {
+      // POSIX replacement leaves any readers of the old version intact.
+      if (::rename(temporary.c_str(), path.c_str()) != 0)
+        throw std::system_error(errno, std::generic_category(), "publish JSON");
+    } else {
+      // Exclusive publication: link cannot replace a destination.
+      if (::link(temporary.c_str(), path.c_str()) != 0)
+        throw std::system_error(errno, std::generic_category(),
+                                "publish JSON without replacement");
+      std::error_code ignored;
+      std::filesystem::remove(temporary, ignored);
+    }
+  } catch (...) {
+    if (file >= 0)
+      ::close(file);
+    std::error_code ignored;
+    std::filesystem::remove(temporary, ignored);
+    throw;
+  }
 #endif
 }
 Json read_json(const std::filesystem::path &path) {
@@ -242,8 +284,15 @@ void request_cancel(const std::filesystem::path &directory) {
       GetLastError() != ERROR_ALREADY_EXISTS)
     windows_error("request cancellation");
 #else
-  (void)directory;
-  throw std::runtime_error("Territory output requires Windows in this version");
+  const auto path = directory / "cancel.request";
+  const int file = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+  if (file < 0) {
+    if (errno != EEXIST)
+      throw std::system_error(errno, std::generic_category(),
+                              "request cancellation");
+    return;
+  }
+  ::close(file);
 #endif
 }
 bool cancellation_requested(const std::filesystem::path &directory) {

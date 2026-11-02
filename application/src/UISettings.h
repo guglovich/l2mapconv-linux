@@ -12,7 +12,16 @@ inline auto imgui_ini_filename() -> const char * {
 #ifdef _WIN32
     const auto *root = _wgetenv(L"LOCALAPPDATA");
 #else
-    const auto *root = std::getenv("LOCALAPPDATA");
+    // Mirror the Windows per-user location with the XDG config directory.
+    const auto *root = std::getenv("XDG_CONFIG_HOME");
+    std::string xdg_fallback;
+    if (root == nullptr || *root == 0) {
+      const auto *home = std::getenv("HOME");
+      if (home != nullptr && *home != 0) {
+        xdg_fallback = std::string(home) + "/.config";
+        root = xdg_fallback.c_str();
+      }
+    }
 #endif
     if (root == nullptr || *root == 0)
       return {};

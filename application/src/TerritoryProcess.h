@@ -15,3 +15,4 @@ public:
 std::unique_ptr<TerritoryProcess> make_territory_process(
     std::wstring job_option = L"--render-job");
 std::wstring quote_windows_argument(std::wstring_view);
+std::string wide_to_utf8(std::wstring_view);

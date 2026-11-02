@@ -14,6 +14,13 @@ bool hash(const std::string &s) {
   return s.size() == 64 &&
          s.find_first_not_of("0123456789abcdef") == std::string::npos;
 }
+// POSIX records the actual package case; compare manifests case-insensitively.
+auto lowercase(std::string value) -> std::string {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    return char(std::tolower(c));
+  });
+  return value;
+}
 void validate_metadata(const RegionMetadata &m) {
   region_bounds(m.map);
   validate_region_grid(m.settings);
@@ -51,10 +58,19 @@ void validate_metadata(const RegionMetadata &m) {
             "Invalid or duplicate navmesh source identity");
   }
   auto own = "maps/" + m.map + ".unr";
-  require(paths.count(own) != 0, "Navmesh own map source missing");
-  for (const auto &name : m.loaded_neighbors)
-    require(paths.count("maps/" + name + ".unr") != 0,
+  require(std::any_of(paths.begin(), paths.end(),
+                      [&](const std::string &path) {
+                        return lowercase(path) == lowercase(own);
+                      }),
+          "Navmesh own map source missing");
+  for (const auto &name : m.loaded_neighbors) {
+    const auto neighbor = "maps/" + name + ".unr";
+    require(std::any_of(paths.begin(), paths.end(),
+                        [&](const std::string &path) {
+                          return lowercase(path) == lowercase(neighbor);
+                        }),
             "Navmesh loaded neighbor source missing");
+  }
 }
 } // namespace
 glm::dvec4 region_bounds(const std::string &map) {

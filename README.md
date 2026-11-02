@@ -42,7 +42,8 @@ Lineage II map previewer, geodata generator and high-resolution map/radar render
 
 ## Usage
 
-The single ready-to-run package is `dist/`. Start **`dist/l2mapconv.exe`** for
+The single ready-to-run package is `dist/`. Start **`dist/l2mapconv.exe`**
+(Windows) or **`dist/l2mapconv`** (Linux) for
 map preview, geodata tools and territory/radar rendering. Keep its `shaders`
 and `textures` folders alongside it. Keep the prepared `pathfinding-backend`
 folder beside the EXE: Lab and CLI connect it automatically, without selecting
@@ -56,16 +57,22 @@ are not included in the public package.
 Test executables stay under `build/`;
 there are no separate VSync, mouse-test or radar applications to choose from.
 Raw mouse input (when supported) and VSync are enabled in the main viewer.
-The window title and `l2mapconv.exe --version` show the source commit and
+The window title and `l2mapconv --version` show the source commit and
 preview profile. `-dirty` means tracked sources or submodules had local changes
 at build time (including the required Recast patch); it is not an error.
 
-Double-click `l2mapconv.exe` to reopen the most recent valid client. On first
-launch, choose the client's `sam` directory. Desktop settings are stored under
-`%LOCALAPPDATA%\l2mapconv\settings.ini`; the client remains read-only.
-Window positions and collapsed states are saved separately in
-`%LOCALAPPDATA%\l2mapconv\imgui.ini`. With no saved layout, windows start stacked
+Double-click `l2mapconv.exe` (or run `dist/l2mapconv`) to reopen the most
+recent valid client. On first launch, choose the client's `sam` directory.
+Desktop settings are stored under `%LOCALAPPDATA%\l2mapconv\settings.ini`
+(Windows) or `~/.config/l2mapconv/` (Linux, `XDG_CONFIG_HOME` aware); the
+client remains read-only. Window positions and collapsed states are saved
+separately in `%LOCALAPPDATA%\l2mapconv\imgui.ini` or
+`~/.config/l2mapconv/imgui.ini`. With no saved layout, windows start stacked
 at the upper left; only Rendering is expanded.
+
+Folder and file dialogs use the native Windows dialogs; on Linux they call
+`zenity` or `kdialog` when installed, so a desktop file picker package is a
+runtime dependency for GUI folder selection.
 
 The `Client` window shows the active client root, a `Browse...` button, and up
 to ten recent client roots (newest first). Choosing a different root validates
@@ -354,7 +361,7 @@ server-time reference is informational; separate timeout/node/window limits
 control the experiment. Setup, report semantics, limits and CLI replay:
 [Pathfinding Lab guide](tools/pathfinding/README.md).
 
-## Territory / radar rendering (Windows 10+)
+## Territory / radar rendering (Windows 10+ / Linux)
 
 The ready build is `dist/l2mapconv.exe`, the same executable as the viewer and
 geodata builder. Keep its
@@ -498,12 +505,31 @@ The install command alone does **not** rebuild or test the application.
 
 ### macOS/Linux
 
+System packages: a C++20 compiler (GCC or Clang), CMake, Ninja, OpenGL
+headers, X11/Wayland client libraries (GLFW builds both backends), and zlib.
+On Debian/Ubuntu: `libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+libxext-dev libxkbcommon-dev libwayland-dev libgl-dev zlib1g-dev`; on Arch
+they come with the usual `mesa`/X11 stack. GUI folder and file dialogs call
+`zenity` or `kdialog` at runtime.
+
 ```sh
-git clone --recurse-submodules -j8 git@github.com:m49n/l2mapconv-public.git
-cd l2mapconv-public
-CC=clang CXX=clang++ cmake -S . -B build -G Ninja -D CMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
+git clone --recurse-submodules -j8 https://github.com/guglovich/l2mapconv-linux.git
+cd l2mapconv-linux
+cmake -S . -B build -G Ninja -D CMAKE_BUILD_TYPE=Release -D BUILD_TESTING=ON \
+  -D BUILD_SHARED_LIBS=OFF -D L2MAPCONV_LOAD_TERRAIN=ON -D L2MAPCONV_LOAD_TEXTURES=OFF
+cmake --build build --target publish --parallel
+./dist/l2mapconv --version
+ctest --test-dir build --output-on-failure
 ```
+
+`publish` builds the app and tests, runs CTest and refreshes `dist/`. CMake
+older than 4.0 ignores the in-tree `CMAKE_POLICY_VERSION_MINIMUM` that keeps
+the vendored submodules configurable on CMake 4.x.
+
+Windows-side specifics stay unchanged: the Windows package uses the Win32
+dialogs, WIC PNG encoding, BCrypt file hashing and Job Object process trees;
+the Linux build implements the same behaviors with zenity/kdialog, zlib,
+bundled SHA-256 and POSIX process groups.
 
 ### CMake Options
 
@@ -549,6 +575,10 @@ interaction and client-asset identity checks are separate from this script.
 - [glm](https://github.com/g-truc/glm)
 - [imgui](https://github.com/ocornut/imgui)
 - [stb](https://github.com/nothings/stb)
+
+Linux additionally links the system zlib for PNG encoding and calls
+`zenity`/`kdialog` for file dialogs; Windows uses WIC, BCrypt and the COM
+dialogs for the same roles.
 
 ## Credits
 

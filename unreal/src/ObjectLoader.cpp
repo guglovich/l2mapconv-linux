@@ -9,6 +9,7 @@
 #include <unreal/ObjectLoader.h>
 #include <unreal/StaticMesh.h>
 #include <unreal/Terrain.h>
+#include <algorithm>
 #include <stdexcept>
 #include <string_view>
 

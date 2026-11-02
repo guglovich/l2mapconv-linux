@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.22)
 project(l2mapconv)
 
+# Vendored submodules declare old minimums (glew 2.8.12, recast 3.0, glm 3.2)
+# that CMake 4.x rejects; accept them without touching the submodules. Older
+# CMake ignores the variable.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
 include(CTest)
 
 # Install directory

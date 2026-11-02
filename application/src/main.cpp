@@ -26,11 +26,16 @@ auto local_app_data_root() -> std::optional<std::filesystem::path> {
   }
   return std::filesystem::path{value};
 #else
-  const auto *value = std::getenv("LOCALAPPDATA");
-  if (value == nullptr || *value == '\0') {
+  // Mirror the Windows per-user location with the XDG config directory.
+  const auto *config_home = std::getenv("XDG_CONFIG_HOME");
+  if (config_home != nullptr && *config_home != '\0') {
+    return std::filesystem::path{config_home};
+  }
+  const auto *home = std::getenv("HOME");
+  if (home == nullptr || *home == '\0') {
     return std::nullopt;
   }
-  return std::filesystem::path{value};
+  return std::filesystem::path{home} / ".config";
 #endif
 }
 
@@ -70,8 +75,8 @@ auto run_desktop(const Application &application) -> int {
       settings_file ? RecentClients::load(*settings_file) : RecentClients{};
   if (!settings_file) {
     utils::Log(utils::LOG_WARN, "App")
-        << "LOCALAPPDATA is unavailable; recent client persistence is "
-           "disabled"
+        << "No user config directory is available; recent client "
+           "persistence is disabled"
         << std::endl;
   }
 
@@ -243,8 +248,8 @@ auto main(int argc, char **argv) -> int {
         settings_file ? RecentClients::load(*settings_file) : RecentClients{};
     if (!settings_file) {
       utils::Log(utils::LOG_WARN, "App")
-          << "LOCALAPPDATA is unavailable; recent client persistence is "
-             "disabled"
+          << "No user config directory is available; recent client "
+             "persistence is disabled"
           << std::endl;
     }
     return run_preview_sessions(application, recent_clients, settings_file,

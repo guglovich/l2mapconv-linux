@@ -46,8 +46,12 @@ NavmeshRegionGeometry load_navmesh_region_geometry(
       throw std::runtime_error("Navmesh package lies outside client");
     auto key = territory::path_utf8(std::filesystem::relative(path, client));
     std::replace(key.begin(), key.end(), '\\', '/');
+#ifdef _WIN32
+    // Windows package names differ in case; treat them as one source. POSIX
+    // keeps the recorded case so the paths stay openable.
     std::transform(key.begin(), key.end(), key.begin(),
                    [](unsigned char c) { return char(std::tolower(c)); });
+#endif
     const auto identity = territory::file_identity(path);
     auto equal = [&](const auto &old) {
       return old.bytes == identity.bytes && old.sha256 == identity.sha256;

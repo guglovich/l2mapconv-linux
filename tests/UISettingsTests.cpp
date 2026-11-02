@@ -24,9 +24,9 @@ public:
       previous = value;
     _wputenv_s(L"LOCALAPPDATA", path.c_str());
 #else
-    if (const auto *value = std::getenv("LOCALAPPDATA"))
+    if (const auto *value = std::getenv("XDG_CONFIG_HOME"))
       previous = value;
-    setenv("LOCALAPPDATA", path.c_str(), 1);
+    setenv("XDG_CONFIG_HOME", path.c_str(), 1);
 #endif
   }
 
@@ -35,9 +35,9 @@ public:
     _wputenv_s(L"LOCALAPPDATA", previous ? previous->c_str() : L"");
 #else
     if (previous)
-      setenv("LOCALAPPDATA", previous->c_str(), 1);
+      setenv("XDG_CONFIG_HOME", previous->c_str(), 1);
     else
-      unsetenv("LOCALAPPDATA");
+      unsetenv("XDG_CONFIG_HOME");
 #endif
     std::error_code ignored;
     std::filesystem::remove_all(path.parent_path(), ignored);

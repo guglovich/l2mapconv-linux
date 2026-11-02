@@ -8,8 +8,13 @@
 auto inspect_client_root(const std::filesystem::path &client_root)
     -> std::optional<ClientStartupSelection> {
   try {
+    // A trailing dot component keeps a trailing separator on POSIX; drop it
+    // for a stable normalized root on every platform.
+    const auto without_dot = client_root.filename() == "."
+                                 ? client_root.parent_path()
+                                 : client_root;
     const auto normalized =
-        std::filesystem::absolute(client_root).lexically_normal();
+        std::filesystem::absolute(without_dot).lexically_normal();
     std::error_code error;
     if (!std::filesystem::is_directory(normalized, error) || error) {
       return std::nullopt;

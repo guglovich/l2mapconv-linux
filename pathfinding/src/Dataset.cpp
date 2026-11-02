@@ -81,8 +81,10 @@ struct PolygonCollector : dtPolyQuery {
 } // namespace
 Dataset Dataset::load(std::string map, const FileIdentity &l2j,
                       const FileIdentity &nav) {
-  const std::vector<NavRegionInput> regions=has_input(nav)?std::vector<NavRegionInput>{{map,nav,{}}}:std::vector<NavRegionInput>{};
-  return load(std::move(map),l2j,regions);
+  std::vector<NavRegionInput> regions;
+  if (has_input(nav))
+    regions.push_back({map, nav, {}});
+  return load(std::move(map), l2j, regions);
 }
 Dataset Dataset::load(std::string map, const FileIdentity &l2j,
                       const std::vector<NavRegionInput>& regions) {

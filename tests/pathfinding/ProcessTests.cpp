@@ -2,8 +2,15 @@
 #include "Support.h"
 #include <territory/PathIO.h>
 #include <thread>
+#ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+using process_id = DWORD;
+#else
+#include <cerrno>
+#include <csignal>
+using process_id = int;
+#endif
 using namespace pf_test;
 namespace {
 bool until(const std::function<bool()> &f) {
@@ -63,7 +70,8 @@ int process_tests(const std::filesystem::path &child) {
           return false;
         auto pid = territory::read_json(temp.path / "grandchild.json")
                        .at("pid")
-                       .get<DWORD>();
+                       .get<process_id>();
+#ifdef _WIN32
         HANDLE grandchild = OpenProcess(SYNCHRONIZE, FALSE, pid);
         if (!grandchild)
           return false;
@@ -73,6 +81,15 @@ int process_tests(const std::filesystem::path &child) {
                  WaitForSingleObject(grandchild, 0) == WAIT_OBJECT_0;
         });
         CloseHandle(grandchild);
+#else
+        tree.terminate_tree_owned();
+        // The grandchild was reparented after its parent died; ESRCH means it
+        // is gone (init reaps it), any other outcome keeps it alive.
+        const bool stopped = until([&] {
+          return tree.exit_code().has_value() &&
+                 kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH;
+        });
+#endif
         const bool untouched = !sentinel.exit_code();
         sentinel.terminate_tree_owned();
         const bool cleaned =

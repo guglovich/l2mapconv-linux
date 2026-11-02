@@ -28,6 +28,7 @@ add_executable(pathfinding_tests pathfinding/Main.cpp pathfinding/ContractTests.
     ${CMAKE_SOURCE_DIR}/application/src/PathfindingController.cpp
     ${CMAKE_SOURCE_DIR}/application/src/OwnedChildProcess.cpp
     ${CMAKE_SOURCE_DIR}/application/src/TerritoryProcess.cpp
+    ${CMAKE_SOURCE_DIR}/application/src/DesktopIntegration.cpp
     ${CMAKE_SOURCE_DIR}/application/src/PathfindingView.cpp)
 target_include_directories(pathfinding_tests PRIVATE ${CMAKE_SOURCE_DIR}/application/src)
 target_link_libraries(pathfinding_tests PRIVATE pathfinding rendering imgui)

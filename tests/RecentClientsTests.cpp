@@ -43,8 +43,13 @@ auto run_recent_clients_tests() -> int {
   recent.promote(temporary.path / "Client A" / ".");
   recent.promote(temporary.path / "Client B");
   recent.promote(temporary.path / "client a");
+#ifdef _WIN32
   failures += expect(recent.entries().size() == 2,
                      "equivalent Windows paths are deduplicated");
+#else
+  failures += expect(recent.entries().size() == 3,
+                     "case-differing POSIX paths stay distinct");
+#endif
   failures += expect(recent.entries().front().filename() == "client a",
                      "promoted client moves to the front");
 

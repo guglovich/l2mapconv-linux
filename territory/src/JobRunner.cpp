@@ -13,6 +13,11 @@
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <cerrno>
+#include <csignal>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 namespace territory {
 namespace {
@@ -82,6 +87,60 @@ protected:
 
 private:
   HANDLE file{INVALID_HANDLE_VALUE};
+  std::streambuf *old_cout{}, *old_cerr{};
+  bool old_color{};
+};
+#else
+std::atomic_bool interrupted{};
+void posix_interrupt_handler(int) { interrupted = true; }
+class WorkerLog : public std::streambuf {
+public:
+  explicit WorkerLog(const std::filesystem::path &path) {
+    file = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+    if (file < 0)
+      throw std::system_error(errno, std::generic_category(),
+                              "create worker log");
+    old_cout = std::cout.rdbuf(this);
+    old_cerr = std::cerr.rdbuf(this);
+    old_color = utils::Log::colored;
+    utils::Log::colored = false;
+  }
+  ~WorkerLog() {
+    std::cout.flush();
+    std::cerr.flush();
+    std::cout.rdbuf(old_cout);
+    std::cerr.rdbuf(old_cerr);
+    utils::Log::colored = old_color;
+    if (file >= 0)
+      ::close(file);
+  }
+
+protected:
+  std::streamsize xsputn(const char *data, std::streamsize size) override {
+    std::streamsize total = 0;
+    while (total < size) {
+      const auto written =
+          ::write(file, data + total,
+                  static_cast<std::size_t>(size - total));
+      if (written <= 0) {
+        if (written < 0 && errno == EINTR)
+          continue;
+        break;
+      }
+      total += static_cast<std::streamsize>(written);
+    }
+    return total;
+  }
+  int_type overflow(int_type value) override {
+    if (traits_type::eq_int_type(value, traits_type::eof()))
+      return traits_type::not_eof(value);
+    char c = traits_type::to_char_type(value);
+    return xsputn(&c, 1) == 1 ? value : traits_type::eof();
+  }
+  int sync() override { return ::fsync(file) == 0 ? 0 : -1; }
+
+private:
+  int file{-1};
   std::streambuf *old_cout{}, *old_cerr{};
   bool old_color{};
 };
@@ -363,8 +422,26 @@ int run_job_file(const std::filesystem::path &directory) {
     std::cout << result_json(job, result).dump() << '\n';
     return result.exit_code;
 #else
-    (void)job;
-    throw std::runtime_error("Territory worker requires Windows");
+    WorkerLog log(directory / "worker.log");
+    interrupted = false;
+    struct InterruptScope {
+      struct sigaction previous_int{}, previous_term{};
+      InterruptScope() {
+        struct sigaction action{};
+        action.sa_handler = posix_interrupt_handler;
+        sigemptyset(&action.sa_mask);
+        sigaction(SIGINT, &action, &previous_int);
+        sigaction(SIGTERM, &action, &previous_term);
+      }
+      ~InterruptScope() {
+        sigaction(SIGINT, &previous_int, nullptr);
+        sigaction(SIGTERM, &previous_term, nullptr);
+      }
+    } handler;
+    auto result = run_job(
+        job, {}, [] { return interrupted.load(); }, default_runner_services());
+    std::cout << result_json(job, result).dump() << '\n';
+    return result.exit_code;
 #endif
   } catch (const std::exception &e) {
     std::cerr << "Invalid territory job: " << e.what() << '\n';

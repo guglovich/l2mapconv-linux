@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <map>
+#include <optional>
 #include <string_view>
 
 namespace {

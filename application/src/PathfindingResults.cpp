@@ -1,5 +1,6 @@
 #include "PathfindingResults.h"
 #include "ClientFolderPicker.h"
+#include "DesktopIntegration.h"
 #include "PathfindingContext.h"
 #include "PathfindingController.h"
 #include <algorithm>
@@ -14,14 +15,6 @@
 #include <stdexcept>
 #include <system_error>
 #include <territory/PathIO.h>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
-#include <shellapi.h>
-#endif
 
 std::optional<double> route_metric_ms(const pathfinding::Json &metrics,
                                       const char *name) {
@@ -154,16 +147,9 @@ ImVec4 result_color(ResultTone tone) {
   }
 }
 void open_result_path(const std::filesystem::path &path) {
-#ifdef _WIN32
-  if (reinterpret_cast<std::intptr_t>(ShellExecuteW(
-          nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <=
-      32)
+  if (!open_path_externally(path))
     throw std::runtime_error(
         "No application could open the selected report or folder");
-#else
-  (void)path;
-  throw std::runtime_error("Opening reports requires Windows in this version");
-#endif
 }
 template <typename F>
 void result_action(PathfindingResultsState &state, F action) {

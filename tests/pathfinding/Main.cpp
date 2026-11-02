@@ -9,6 +9,22 @@
 #include <pathfinding/BackendAdapters.h>
 #include <pathfinding/Dataset.h>
 #include <territory/PathIO.h>
+
+namespace {
+// Test workers are built into the same directory as this executable; only
+// Windows names carry the .exe suffix.
+auto sibling_executable(char **argv, std::string_view name)
+    -> std::filesystem::path {
+#ifdef _WIN32
+  std::string suffixed{name};
+  suffixed += ".exe";
+  return std::filesystem::absolute(argv[0]).parent_path() / suffixed;
+#else
+  return std::filesystem::absolute(argv[0]).parent_path() / name;
+#endif
+}
+} // namespace
+
 void write_route_fixtures(const std::filesystem::path &);
 int contract_tests();
 int dataset_tests();
@@ -49,7 +65,7 @@ int main(int argc, char **argv) try {
   if(argc==8 && std::string_view(argv[1])=="--benchmark-controller") {
     const auto route=pathfinding::read_case(argv[2]);
     const auto profile=pathfinding::read_profile(argv[3]);
-    PathfindingController controller(std::filesystem::absolute(argv[0]).parent_path()/"l2mapconv.exe",
+    PathfindingController controller(sibling_executable(argv, "l2mapconv"),
                                     std::filesystem::absolute(argv[4]));
     pathfinding::BenchmarkSettings settings{std::stoi(argv[5]),std::stoi(argv[6])};
     const std::string cancel_phase=argv[7];
@@ -142,14 +158,10 @@ int main(int argc, char **argv) try {
   int n = contract_tests() + dataset_tests() + view_tests() + input_tests() +
           overlay_tests() + result_presentation_tests() +
           backend_adapter_tests() + job_tests() +
-          replay_tests(std::filesystem::absolute(argv[0]).parent_path() /
-                       "l2mapconv.exe") +
-          process_tests(std::filesystem::absolute(argv[0]).parent_path() /
-                        "pathfinding_process_child.exe") +
-          controller_tests(std::filesystem::absolute(argv[0]).parent_path() /
-                               "l2mapconv.exe",
-                           std::filesystem::absolute(argv[0]).parent_path() /
-                               "pathfinding_process_child.exe");
+          replay_tests(sibling_executable(argv, "l2mapconv")) +
+          process_tests(sibling_executable(argv, "pathfinding_process_child")) +
+          controller_tests(sibling_executable(argv, "l2mapconv"),
+                           sibling_executable(argv, "pathfinding_process_child"));
   std::cout << "Pathfinding failures: " << n << '\n';
   return n ? 1 : 0;
 } catch (const std::exception &e) {

@@ -10,8 +10,8 @@
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
-
-#include <shellapi.h>
+#else
+#include <csignal>
 #endif
 namespace {
 bool public_mode(std::string_view value) {
@@ -60,6 +60,24 @@ struct InterruptScope {
     SetConsoleCtrlHandler(interrupt, TRUE);
   }
   ~InterruptScope() { SetConsoleCtrlHandler(interrupt, FALSE); }
+};
+#else
+std::atomic_bool interrupted{};
+void cli_interrupt(int) { interrupted = true; }
+struct InterruptScope {
+  struct sigaction previous_int{}, previous_term{};
+  InterruptScope() {
+    interrupted = false;
+    struct sigaction action{};
+    action.sa_handler = cli_interrupt;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGINT, &action, &previous_int);
+    sigaction(SIGTERM, &action, &previous_term);
+  }
+  ~InterruptScope() {
+    sigaction(SIGINT, &previous_int, nullptr);
+    sigaction(SIGTERM, &previous_term, nullptr);
+  }
 };
 #endif
 } // namespace
@@ -167,15 +185,10 @@ int run_territory_command(const TerritoryCommand &command) {
     territory::RunResult result;
     {
       LogRedirect logs;
-#ifdef _WIN32
       InterruptScope handler;
       result = territory::run_job(
           job, {}, [] { return interrupted.load(); },
           territory::default_runner_services());
-#else
-      result =
-          territory::run_job(job, {}, {}, territory::default_runner_services());
-#endif
     }
     std::cout << territory::result_json(job, result).dump() << '\n';
     return result.exit_code;

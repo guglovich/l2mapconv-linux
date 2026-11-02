@@ -1,18 +1,11 @@
 #include "TerritoryRenderWindow.h"
 #include "ClientFolderPicker.h"
 #include "ClientSessionContext.h"
+#include "DesktopIntegration.h"
 #include "MapSelectionContext.h"
 #include "TerritoryRenderController.h"
 #include <imgui.h>
 #include <territory/PathIO.h>
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-
-#include <shellapi.h>
-#endif
 void draw_territory_render_window(TerritoryRenderViewState &view,
                                   TerritoryRenderController &controller,
                                   const MapSelectionContext &selection,
@@ -115,15 +108,8 @@ void draw_territory_render_window(TerritoryRenderViewState &view,
         "Job / report folder: %s",
         territory::path_utf8(controller.job_directory()).c_str());
     if (ImGui::Button("Open output folder")) {
-#ifdef _WIN32
-      const auto result =
-          ShellExecuteW(nullptr, L"open", controller.job_directory().c_str(),
-                        nullptr, nullptr, SW_SHOWNORMAL);
-      if (reinterpret_cast<std::intptr_t>(result) <= 32)
+      if (!open_path_externally(controller.job_directory()))
         view.error = "Unable to open output folder.";
-#else
-      view.error = "Opening folders requires Windows.";
-#endif
     }
   }
   if (!view.error.empty())

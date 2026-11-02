@@ -1,7 +1,12 @@
 #include "ClientFolderPicker.h"
 
+#include "TerritoryProcess.h"
+
 #include <utils/Log.h>
 
+#include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -77,6 +82,91 @@ auto utf8_to_wide(std::string_view value) -> std::wstring {
 }
 
 } // namespace
+#else
+namespace {
+
+std::string shell_quote(const std::string &value) {
+  std::string result = "'";
+  for (char c : value)
+    result += c == '\'' ? "'\\''" : std::string(1, c);
+  result += "'";
+  return result;
+}
+
+bool helper_available(const char *name) {
+  const std::string probe =
+      std::string("command -v ") + name + " >/dev/null 2>&1";
+  return std::system(probe.c_str()) == 0;
+}
+
+// Runs a picker helper and returns its first stdout line; empty output or a
+// nonzero exit means the user cancelled or the helper failed. Helper
+// diagnostics stay on our stderr.
+std::optional<std::string> capture_first_line(const std::string &command) {
+  FILE *process = ::popen(command.c_str(), "r");
+  if (!process) {
+    utils::Log(utils::LOG_ERROR, "App")
+        << "Cannot run the file picker helper" << std::endl;
+    return std::nullopt;
+  }
+  std::string line;
+  std::array<char, 512> buffer{};
+  while (line.size() < 4096 &&
+         std::fgets(buffer.data(), static_cast<int>(buffer.size()), process)) {
+    line += buffer.data();
+    if (!line.empty() && line.back() == '\n')
+      break;
+  }
+  const int status = ::pclose(process);
+  while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+    line.pop_back();
+  if (status != 0 || line.empty())
+    return std::nullopt;
+  return line;
+}
+
+std::optional<std::string> helper_directory(const std::string &title) {
+  const auto quoted = shell_quote(title);
+  if (helper_available("zenity"))
+    return capture_first_line("zenity --file-selection --directory --title=" +
+                              quoted);
+  if (helper_available("kdialog"))
+    return capture_first_line("kdialog --getexistingdirectory $HOME --title " +
+                              quoted);
+  utils::Log(utils::LOG_ERROR, "App")
+      << "No folder picker helper found; install zenity or kdialog"
+      << std::endl;
+  return std::nullopt;
+}
+
+std::optional<std::string> helper_file(const std::string &title, bool save_new,
+                                       const std::string &extension) {
+  const auto quoted = shell_quote(title);
+  if (helper_available("zenity")) {
+    std::string command = "zenity --file-selection --title=" + quoted;
+    if (!extension.empty())
+      command += " --file-filter=" +
+                 shell_quote(extension + " files | *." + extension) +
+                 " --file-filter=" + shell_quote("All files | *");
+    if (save_new)
+      command += " --save --confirm-overwrite";
+    return capture_first_line(command);
+  }
+  if (helper_available("kdialog")) {
+    const std::string filter =
+        extension.empty() ? std::string("*|All files")
+                          : "*." + extension + "|" + extension + " files";
+    return capture_first_line(
+        std::string(save_new ? "kdialog --getsavefilename $HOME "
+                             : "kdialog --getopenfilename $HOME ") +
+        shell_quote(filter) + " --title " + quoted);
+  }
+  utils::Log(utils::LOG_ERROR, "App")
+      << "No file picker helper found; install zenity or kdialog" << std::endl;
+  return std::nullopt;
+}
+
+} // namespace
 #endif
 
 auto choose_client_root_folder() -> std::optional<std::filesystem::path> {
@@ -146,8 +236,10 @@ auto choose_directory(std::wstring_view title) -> std::optional<std::filesystem:
       raw_path, &CoTaskMemFree};
   return std::filesystem::path{selected_path.get()};
 #else
-  (void)title;
-  return std::nullopt;
+  const auto picked = helper_directory(wide_to_utf8(title));
+  if (!picked)
+    return std::nullopt;
+  return std::filesystem::path{*picked};
 #endif
 }
 
@@ -182,6 +274,18 @@ auto choose_file(std::wstring_view title, bool save_new,
   const std::unique_ptr<wchar_t,decltype(&CoTaskMemFree)> owned{path,&CoTaskMemFree};
   return std::filesystem::path{path};
 #else
-  (void)title;(void)save_new;(void)default_extension;return {};
+  const std::string extension = wide_to_utf8(default_extension);
+  auto picked =
+      helper_file(wide_to_utf8(title), save_new, extension);
+  if (!picked)
+    return std::nullopt;
+  // Mirror the Windows default-extension handling when saving.
+  const auto slash = picked->find_last_of('/');
+  const auto dot = picked->find_last_of('.');
+  if (save_new && !extension.empty() &&
+      (dot == std::string::npos ||
+       (slash != std::string::npos && dot < slash)))
+    *picked += "." + extension;
+  return std::filesystem::path{*picked};
 #endif
 }
