@@ -395,6 +395,7 @@ struct PngOutput::Impl {
     row_buffer.resize(1 + static_cast<std::size_t>(w) * 3);
 #endif
   }
+#ifndef _WIN32
   void deflate_feed(std::span<const std::uint8_t> data) {
     zlib.next_in =
         const_cast<Bytef *>(reinterpret_cast<const Bytef *>(data.data()));
@@ -418,6 +419,7 @@ struct PngOutput::Impl {
         throw std::runtime_error("PNG deflate stalled");
     }
   }
+#endif
   void check() {
     if (std::this_thread::get_id() != owner)
       throw std::runtime_error("PNG writer used from a different thread");
