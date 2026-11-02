@@ -531,6 +531,21 @@ dialogs, WIC PNG encoding, BCrypt file hashing and Job Object process trees;
 the Linux build implements the same behaviors with zenity/kdialog, zlib,
 bundled SHA-256 and POSIX process groups.
 
+### Arch Linux package
+
+`packaging/PKGBUILD` builds the ready package the same way as `publish`:
+pinned git source, vendored submodules, CTest in `check()`, then installs the
+self-contained application into `/opt/l2mapconv` with a `/usr/bin/l2mapconv`
+symlink, a desktop entry and the MIT license file. Job outputs go to
+`$XDG_DATA_HOME/l2mapconv` (default `~/.local/share/l2mapconv`) when the
+install prefix is read-only.
+
+```sh
+cd packaging
+makepkg -f
+pacman -U l2mapconv-*.pkg.tar.zst
+```
+
 ### CMake Options
 
 - `L2MAPCONV_GEODATA_POST_PROCESSING` — enable geodata compression and cell alignment. Disable to see actual cell positions during development.

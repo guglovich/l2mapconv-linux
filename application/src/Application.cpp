@@ -29,9 +29,38 @@
 #include "UnrealMapSource.h"
 
 #include <algorithm>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
+namespace {
+
+// The portable package writes results beside the executable; a system install
+// (/opt, /usr) is read-only, so job outputs fall back to the user data
+// directory instead.
+auto writable_output_root(const std::filesystem::path &resource_root)
+    -> std::filesystem::path {
+#ifdef _WIN32
+  if (_waccess(resource_root.c_str(), 06) == 0)
+    return resource_root;
+  if (const auto *root = _wgetenv(L"LOCALAPPDATA"); root && *root)
+    return std::filesystem::path{root} / L"l2mapconv";
+#else
+  if (::access(resource_root.c_str(), W_OK) == 0)
+    return resource_root;
+  if (const auto *data_home = std::getenv("XDG_DATA_HOME"); data_home && *data_home)
+    return std::filesystem::path{data_home} / "l2mapconv";
+  if (const auto *home = std::getenv("HOME"); home && *home)
+    return std::filesystem::path{home} / ".local/share/l2mapconv";
+#endif
+  return resource_root;
+}
+
+} // namespace
 
 Application::Application(std::filesystem::path resource_root)
-    : m_resource_root{std::move(resource_root)} {}
+    : m_resource_root{std::move(resource_root)},
+      m_output_root{writable_output_root(m_resource_root)} {}
 
 auto Application::preview(const std::filesystem::path &client_root,
                           const std::vector<std::string> &maps,
@@ -89,11 +118,11 @@ auto Application::preview(const std::filesystem::path &client_root,
     Renderer renderer{rendering_context, m_resource_root};
     LiveVisualRenderer live_renderer{rendering_context.context};
     TerritoryRenderController territory_controller{running_executable_path(), make_territory_process()};
-    TerritoryRenderViewState territory_view{{}, m_resource_root / "output" / "radar", {}};
+    TerritoryRenderViewState territory_view{{}, m_output_root / "radar", {}};
     GeodataBuildController geodata_controller{
-        running_executable_path(), m_resource_root / "output" / "geodata",
+        running_executable_path(), m_output_root / "geodata",
         make_territory_process(L"--geodata-job")};
-    PathfindingController pathfinding_controller{running_executable_path(),m_resource_root/"output"/"pathfinding"};
+    PathfindingController pathfinding_controller{running_executable_path(),m_output_root/"pathfinding"};
     PathfindingWindow pathfinding_window;
     try {
       const auto bundled = pathfinding::default_backend_profile_path(m_resource_root);

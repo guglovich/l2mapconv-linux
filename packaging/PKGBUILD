@@ -1,0 +1,70 @@
+# Maintainer: guglovich <guglovich164@gmail.com>
+# Lineage II map previewer, geodata generator and map/radar renderer.
+# The application resolves its resources (shaders, textures) relative to the
+# executable, so the whole ready package installs into /opt/l2mapconv with a
+# /usr/bin symlink; job outputs go to XDG_DATA_HOME when /opt is read-only.
+pkgname=l2mapconv
+pkgver=r163.g4dc93bb
+pkgrel=1
+pkgdesc='Lineage II map previewer, geodata generator and map/radar renderer'
+arch=('x86_64')
+url='https://github.com/guglovich/l2mapconv-linux'
+license=('MIT')
+options=('!debug')
+depends=('gcc-libs' 'glibc' 'libglvnd' 'libx11' 'libxcursor' 'libxext' 'libxi'
+         'libxinerama' 'libxkbcommon' 'libxrandr' 'wayland' 'zlib')
+makedepends=('cmake' 'git' 'ninja')
+optdepends=('zenity: folder and file dialogs (or kdialog)'
+            'java-runtime: Pathfinding Lab backend')
+source=("$pkgname::git+$url.git#commit=4dc93bb5d44dde34a6a6676bc4ec5ed6c94cb8ce")
+b2sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/$pkgname"
+  printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd "$srcdir/$pkgname"
+  git submodule update --init --recursive
+}
+
+build() {
+  cmake -S "$srcdir/$pkgname" -B build -G Ninja \
+      -D CMAKE_BUILD_TYPE=Release \
+      -D BUILD_TESTING=ON \
+      -D BUILD_SHARED_LIBS=OFF \
+      -D L2MAPCONV_LOAD_TERRAIN=ON \
+      -D L2MAPCONV_LOAD_TEXTURES=OFF
+  cmake --build build --parallel
+}
+
+check() {
+  ctest --test-dir build --output-on-failure
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build --component Runtime \
+      --prefix "/opt/$pkgname"
+
+  install -d "$pkgdir/usr/bin"
+  ln -s "/opt/$pkgname/l2mapconv" "$pkgdir/usr/bin/l2mapconv"
+
+  install -Dm644 "$srcdir/$pkgname/map.png" \
+      "$pkgdir/usr/share/pixmaps/$pkgname.png"
+  install -Dm644 "$srcdir/$pkgname/LICENSE" \
+      "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  install -d "$pkgdir/usr/share/applications"
+  cat > "$pkgdir/usr/share/applications/$pkgname.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=l2mapconv
+GenericName=Lineage II map tools
+Comment=Lineage II map previewer, geodata generator and radar renderer
+Exec=l2mapconv
+Icon=l2mapconv
+Categories=Game;Utility;
+Keywords=Lineage;l2j;geodata;navmesh;
+EOF
+}

@@ -20,4 +20,5 @@ public:
 
 private:
   const std::filesystem::path m_resource_root;
+  const std::filesystem::path m_output_root;
 };
