@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "kind": "geodata",
+  "job_id": "navmesh-15-18",
+  "client_root": "/Games/ElmoreX3",
+  "maps": ["15_18"],
+  "outputs": {"l2j": false, "client_dat": false, "navmesh": true},
+  "navmesh_settings": {
+    "actor_height": 48, "actor_radius": 16, "max_climb": 16,
+    "max_slope": 45.5, "cell_size": 16, "cell_height": 1, "tile_cells": 64
+  }
+}

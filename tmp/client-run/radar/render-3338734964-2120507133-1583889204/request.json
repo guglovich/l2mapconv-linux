@@ -1,0 +1,15 @@
+{
+  "client_root": "/Games/ElmoreX3",
+  "job_id": "render-3338734964-2120507133-1583889204",
+  "maps": [
+    "15_18"
+  ],
+  "mode": "render",
+  "resolution": 1024,
+  "schema_version": 1,
+  "shadows": false,
+  "sun_azimuth_deg": 315.0,
+  "sun_elevation_deg": 40.0,
+  "textures": true,
+  "water": true
+}

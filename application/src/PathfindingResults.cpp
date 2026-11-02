@@ -16,6 +16,13 @@
 #include <system_error>
 #include <territory/PathIO.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 std::optional<double> route_metric_ms(const pathfinding::Json &metrics,
                                       const char *name) {
   const auto found = metrics.find(name);

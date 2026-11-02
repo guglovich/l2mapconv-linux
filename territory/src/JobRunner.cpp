@@ -9,6 +9,7 @@
 #include <territory/PathIO.h>
 #include <territory/PngOutput.h>
 #include <territory/VisualSceneLoader.h>
+#include <utils/CasePath.h>
 #include <utils/Log.h>
 #ifdef _WIN32
 #define NOMINMAX
@@ -251,7 +252,8 @@ RunResult run_job(const Job &input, const Progress &progress,
       result.status.tiles_total = 0;
       result.status.phase = Phase::Loading;
       publish();
-      const auto primary = job.client / "Maps" / (map + ".unr");
+      const auto primary =
+          utils::resolve_directory(job.client, "Maps") / (map + ".unr");
       const auto before = file_identity(primary);
       check_cancel(cancel);
       SceneScope owned{

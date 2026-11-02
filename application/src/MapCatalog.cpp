@@ -1,5 +1,7 @@
 #include "MapCatalog.h"
 
+#include <utils/CasePath.h>
+
 #include <algorithm>
 #include <charconv>
 #include <map>
@@ -45,7 +47,9 @@ auto MapCatalog::discover(const std::filesystem::path &client_root)
   MapCatalog catalog;
   std::map<MapCoordinate, MapRegion> regions;
 
-  const auto maps_directory = client_root / "Maps";
+  const auto maps_directory = utils::resolve_directory(client_root, "Maps");
+  if (maps_directory.empty())
+    return catalog;
   for (const auto &entry : std::filesystem::directory_iterator{maps_directory}) {
     if (!entry.is_regular_file() || entry.path().extension() != ".unr") {
       continue;

@@ -1,4 +1,5 @@
 #include "NavmeshRegionGeometry.h"
+#include <utils/CasePath.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -73,9 +74,10 @@ NavmeshRegionGeometry load_navmesh_region_geometry(
   };
   auto names = navmesh::region_neighbors(name);
   names.insert(names.begin(), name);
+  const auto maps_directory = utils::resolve_directory(client, "Maps");
   for (const auto &current : names) {
     check(cancel);
-    const auto file = client / "Maps" / (current + ".unr");
+    const auto file = maps_directory / (current + ".unr");
     if (!std::filesystem::exists(file) && current != name) {
       metadata.missing_neighbors.push_back(current);
       continue;

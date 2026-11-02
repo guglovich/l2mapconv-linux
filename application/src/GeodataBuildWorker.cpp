@@ -10,6 +10,7 @@
 #include <iostream>
 #include <navmesh/Navmesh.h>
 #include <territory/PathIO.h>
+#include <utils/CasePath.h>
 #include <utils/Log.h>
 
 namespace {
@@ -71,8 +72,9 @@ int run_geodata_job_file(const std::filesystem::path &directory) {
         status.tiles_done = status.tiles_total = 0;
         status.phase = territory::Phase::Loading;
         publish();
-        if (!std::filesystem::is_regular_file(job.client / "Maps" /
-                                              (name + ".unr")))
+        if (!std::filesystem::is_regular_file(
+                utils::resolve_directory(job.client, "Maps") /
+                (name + ".unr")))
           throw std::runtime_error("Map input is missing: " + name);
         GeodataContext context;
         // Same full collision geometry path as Application::build; no viewer

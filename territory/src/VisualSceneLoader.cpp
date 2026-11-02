@@ -336,7 +336,10 @@ VisualScene VisualSceneLoader::load(const std::string &name,
         issue(IssueKind::Corrupt, neighbour, e.what());
       }
       if (edges[n] && (edges[n]->broken_scale() ||
-                       !edges[n]->terrain_map.has_reference()))
+                       !edges[n]->terrain_map.has_reference() ||
+                       // A repack may ship the .unr without its T_* heightmap
+                       // package; the dangling import must clamp, not fail.
+                       !edges[n]->terrain_map))
         edges[n].reset();
       if (!edges[n])
         issue(IssueKind::Simplified, neighbour,

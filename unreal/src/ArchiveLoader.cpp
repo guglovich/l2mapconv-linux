@@ -1,5 +1,7 @@
 #include "pch.h"
 
+#include <utils/CasePath.h>
+
 #include <unreal/Archive.h>
 #include <unreal/ArchiveLoader.h>
 
@@ -18,8 +20,11 @@ auto ArchiveLoader::load_archive(const std::string &name) const -> Archive * {
       << "Loading package: " << name << std::endl;
 
   for (const auto &config : m_configs) {
-    const auto path =
-        m_root_path / config.directory / (name + "." + config.extension);
+    const auto directory =
+        utils::resolve_directory(m_root_path, config.directory.string());
+    if (directory.empty())
+      continue;
+    const auto path = directory / (name + "." + config.extension);
 
     if (!std::filesystem::exists(path)) {
       continue;

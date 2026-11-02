@@ -32,6 +32,10 @@ auto UnrealLoader::load_map(const std::string &name,
   // Terrain
   const auto terrain = load_terrain(package);
 
+  if (!terrain) {
+    return Map{};
+  }
+
   map.position = to_vec3(terrain->position());
   const auto scale = to_vec3(terrain->scale());
   map.bounding_box = geometry::Box{
@@ -96,9 +100,24 @@ auto UnrealLoader::load_terrain(const unreal::Package &package) const
 
   const auto &terrain = terrains[0];
 
+  // Repacked clients ship some maps without their T_* heightmap package;
+  // the unresolved reference must not dereference as a null object.
+  if (!terrain->terrain_map) {
+    utils::Log(utils::LOG_WARN, "App")
+        << "No terrain heightmap in package: " << package.name() << std::endl;
+    return nullptr;
+  }
+
   const auto &mips = terrain->terrain_map->mips;
   ASSERT(!mips.empty(), "App",
          "Can't load terrain heightmap in package: " << package.name());
+
+  if (mips.empty()) {
+    utils::Log(utils::LOG_WARN, "App")
+        << "Empty terrain heightmap in package: " << package.name()
+        << std::endl;
+    return nullptr;
+  }
 
   return terrain;
 }
@@ -114,7 +133,7 @@ auto UnrealLoader::load_side_terrain(int x, int y) const
 
   auto terrain = load_terrain(package.value());
 
-  if (terrain->broken_scale()) {
+  if (!terrain || terrain->broken_scale()) {
     return nullptr;
   }
 

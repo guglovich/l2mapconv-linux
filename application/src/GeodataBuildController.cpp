@@ -1,5 +1,7 @@
 #include "GeodataBuildController.h"
 
+#include <utils/CasePath.h>
+
 #include <algorithm>
 #include <territory/PathIO.h>
 #include <navmesh/RegionMetadata.h>
@@ -48,8 +50,9 @@ bool GeodataBuildController::start(const std::filesystem::path &client,
                               navmesh_settings,
                               navmesh_neighbor_context};
     validate_geodata_job(candidate);
+    const auto maps_directory = utils::resolve_directory(client, "Maps");
     for (const auto &map : maps)
-      if (!std::filesystem::is_regular_file(client / "Maps" / (map + ".unr")))
+      if (!std::filesystem::is_regular_file(maps_directory / (map + ".unr")))
         throw std::invalid_argument("Map input is missing: " + map);
     candidate.directory = territory::create_job_directory(m_output, client);
     candidate.id = territory::path_utf8(candidate.directory.filename());
