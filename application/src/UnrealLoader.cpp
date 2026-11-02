@@ -98,6 +98,12 @@ auto UnrealLoader::load_terrain(const unreal::Package &package) const
   ASSERT(!terrains.empty(), "App",
          "No terrains in package: " << package.name());
 
+  if (terrains.empty()) {
+    utils::Log(utils::LOG_WARN, "App")
+        << "No terrains in package: " << package.name() << std::endl;
+    return nullptr;
+  }
+
   const auto &terrain = terrains[0];
 
   // Repacked clients ship some maps without their T_* heightmap package;
